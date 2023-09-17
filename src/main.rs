@@ -19,7 +19,7 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
         // Example: "i42e" -> "42"
         let end_index = encoded_value.find('e').unwrap();
         let number_string = &encoded_value[1..end_index];
-        return serde_json::Number::from_f64(ascii_to_number(number_string) as f64)
+        return serde_json::Number::try_from(ascii_to_number(number_string))
             .unwrap()
             .into();
     } else {
