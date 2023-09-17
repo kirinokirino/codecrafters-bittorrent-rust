@@ -18,7 +18,7 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
     } else if encoded_value.chars().next().unwrap() == 'i' {
         // Example: "i42e" -> "42"
         let end_index = encoded_value.find('e').unwrap();
-        let number_string = &encoded_value[..end_index];
+        let number_string = &encoded_value[1..end_index];
         return serde_json::Number::from_f64(ascii_to_number(number_string) as f64)
             .unwrap()
             .into();
@@ -43,7 +43,7 @@ fn ascii_to_number(s: &str) -> i64 {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
-
+    // i576805101e
     if command == "decode" {
         // You can use print statements as follows for debugging, they'll be visible when running tests.
         // println!("Logs from your program will appear here!");
