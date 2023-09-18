@@ -1,5 +1,4 @@
 use serde_bencode::{de, value::Value};
-use serde_json;
 
 use std::env;
 
@@ -35,6 +34,15 @@ fn display_value(value: &Value) {
             }
             print!("]");
         }
-        Value::Dict(dict) => (), //println!("{:?}", dict),
+        Value::Dict(dict) => {
+            print!("{{");
+            for (i, (key, value)) in dict.iter().enumerate() {
+                if i > 0 { print!(",");
+                    }
+                print!("\"{}\":", String::from_utf8_lossy(key));
+                display_value(value);
+            }
+            print!("}}");
+        }, 
     }
 }
