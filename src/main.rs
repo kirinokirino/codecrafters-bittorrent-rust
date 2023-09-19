@@ -39,6 +39,9 @@ fn displayed_value(value: Value) -> String {
                     )
                 })
                 .collect();
+            if array.is_empty() {
+                return "{}".to_string();
+            }
             array.sort_by(|(key1, _), (key2, _)| std::cmp::Ord::cmp(key1, key2));
             let mut displayed = array
                 .into_iter()
@@ -73,5 +76,8 @@ mod tests {
         
         let dict = "d3:foo3:bar5:helloi52ee";
         assert_eq!(r#"{"foo":"bar","hello":52}"#, displayed_value(de::from_str(dict).unwrap()));
+        
+        let empty_dict = "de";
+        assert_eq!(r#"{}"#, displayed_value(de::from_str(empty_dict).unwrap()));
     }
 }
