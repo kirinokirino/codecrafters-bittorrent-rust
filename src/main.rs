@@ -2,47 +2,76 @@ use serde_bencode::{de, value::Value};
 
 use std::env;
 
-// Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
-    // i576805101e
     if command == "decode" {
-        // You can use print statements as follows for debugging, they'll be visible when running tests.
-        // println!("Logs from your program will appear here!");
-
         let encoded_value = &args[2];
         let decoded_value: Value = de::from_str(encoded_value).unwrap();
-        display_value(&decoded_value);
-        println!();
+        println!("{}", displayed_value(decoded_value));
     } else {
         println!("unknown command: {}", args[1])
     }
 }
 
-fn display_value(value: &Value) {
+fn displayed_value(value: Value) -> String {
     match value {
-        Value::Bytes(bytes) => print!("\"{}\"", String::from_utf8_lossy(&bytes)),
-        Value::Int(int) => print!("{}", int),
-        Value::List(list) => {
-            print!("[");
-            for (i, value) in list.iter().enumerate() {
-                if i > 0 {
-                    print!(",");
-                }
-                display_value(value);
-            }
-            print!("]");
+        Value::Bytes(bytes) => {
+            format!("\"{}\"", String::from_utf8_lossy(&bytes))
         }
+        Value::Int(int) => format!("{int}"),
+        Value::List(list) => format!(
+            "[{}]",
+            list.into_iter().fold(String::new(), |mut acc, value| {
+                if !acc.is_empty() {
+                    acc.push(',');
+                }
+                format!("{acc}{}", displayed_value(value))
+            })
+        ),
         Value::Dict(dict) => {
-            print!("{{");
-            for (i, (key, value)) in dict.iter().enumerate() {
-                if i > 0 { print!(",");
+            let mut array: Vec<(String, String)> = dict
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        format!("\"{}\"", String::from_utf8_lossy(&key)),
+                        displayed_value(value),
+                    )
+                })
+                .collect();
+            array.sort_by(|(key1, _), (key2, _)| std::cmp::Ord::cmp(key1, key2));
+            let mut displayed = array
+                .into_iter()
+                .fold(String::new(), |mut acc, (next_key, next_value)| {
+                    if acc.is_empty() {
+                        acc.push('{');
+                    } else {
+                        acc.push(',');
                     }
-                print!("\"{}\":", String::from_utf8_lossy(key));
-                display_value(value);
-            }
-            print!("}}");
-        }, 
+                    acc = format!("{acc}{next_key}:{next_value}");
+                    acc
+                });
+            displayed.push('}');
+            displayed
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+    #[test]
+    fn test_display_bencode_values() {
+        let bytes = "5:hello";
+        assert_eq!("\"hello\"", displayed_value(de::from_str(bytes).unwrap()));
+        
+        let number = "i42e";
+        assert_eq!("42", displayed_value(de::from_str(number).unwrap()));
+        
+        let list = "l5:helloi42ee";
+        assert_eq!("[\"hello\",42]", displayed_value(de::from_str(list).unwrap()));
+        
+        let dict = "d3:foo3:bar5:helloi52ee";
+        assert_eq!(r#"{"foo":"bar","hello":52}"#, displayed_value(de::from_str(dict).unwrap()));
     }
 }
