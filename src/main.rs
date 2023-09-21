@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_bencode::{de, value::Value};
+use serde_bencode::{ser, de, value::Value};
 use serde_bytes::ByteBuf;
+use sha1::{Sha1, Digest};
 
 use std::env;
 use std::fs::read;
@@ -18,7 +19,10 @@ fn main() {
         let decoded_value: Torrent = de::from_bytes::<Torrent>(&torrent).unwrap();
         let announce = decoded_value.announce;
         let length = decoded_value.info.length;
-        println!("Tracker URL: {}\nLength: {}", announce, length);
+        let mut hasher = Sha1::new();
+        hasher.update(ser::to_bytes(&decoded_value.info).unwrap());
+        let info_hash = hasher.finalize();
+        println!("Tracker URL: {}\nLength: {}\nInfo Hash: {:x}", announce, length, info_hash);
     } else {
         println!("unknown command: {}", args[1])
     }
