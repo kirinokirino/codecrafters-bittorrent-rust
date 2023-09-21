@@ -1,3 +1,4 @@
+use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_bencode::{de, ser, value::Value};
 use serde_bytes::ByteBuf;
@@ -10,31 +11,9 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
     if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value: Value = de::from_str(encoded_value).unwrap();
-        println!("{}", displayed_value(decoded_value));
+        println!("{}", decode(&args[2]));
     } else if command == "info" {
-        let torrent_path = &args[2];
-        let torrent = read(torrent_path).unwrap();
-        let decoded_value: Torrent = de::from_bytes::<Torrent>(&torrent).unwrap();
-        let announce = decoded_value.announce;
-        let length = decoded_value.info.length;
-        let mut hasher = Sha1::new();
-        hasher.update(ser::to_bytes(&decoded_value.info).unwrap());
-        let info_hash = hasher.finalize();
-        let piece_length = decoded_value.info.piece_length;
-        let piece_hashes = decoded_value.info.pieces.as_slice();
-        println!(
-            "Tracker URL: {}\nLength: {}\nInfo Hash: {:x}\nPiece Length: {}\nPiece Hashes:",
-            announce, length, info_hash, piece_length
-        );
-        for (i, byte) in piece_hashes.iter().enumerate() {
-            if i % 20 == 19 {
-                println!("{byte:02x}");
-            } else {
-                print!("{byte:02x}");
-            }
-        }
+        println!("{}", torrent_info(&args[2]));
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -55,6 +34,39 @@ struct Info {
     #[serde(rename = "piece length")]
     piece_length: i64,
     pieces: ByteBuf,
+}
+
+fn parse_torrent_file(path: &str) -> Torrent {
+    let contents = read(path).unwrap();
+    de::from_bytes::<Torrent>(&contents).unwrap()
+}
+
+fn torrent_info(path: &str) -> String {
+    let torrent = parse_torrent_file(path);
+    let announce = torrent.announce;
+    let length = torrent.info.length;
+    let mut hasher = Sha1::new();
+    hasher.update(ser::to_bytes(&torrent.info).unwrap());
+    let info_hash = hasher.finalize();
+    let piece_length = torrent.info.piece_length;
+    let piece_hashes = torrent.info.pieces.as_slice();
+    let mut output = format!(
+        "Tracker URL: {}\nLength: {}\nInfo Hash: {:x}\nPiece Length: {}\nPiece Hashes:",
+        announce, length, info_hash, piece_length
+    );
+    for (i, byte) in piece_hashes.iter().enumerate() {
+        if i % 20 == 19 {
+            output.push_str(&format!("{byte:02x}\n"));
+        } else {
+            output.push_str(&format!("{byte:02x}"));
+        }
+    }
+    output.trim_end_matches('\n').to_string()
+}
+
+fn decode(value: &str) -> String {
+    let decoded_value: Value = de::from_str(value).unwrap();
+    format!("{}", displayed_value(decoded_value))
 }
 
 fn displayed_value(value: Value) -> String {
@@ -107,6 +119,21 @@ fn displayed_value(value: Value) -> String {
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    #[test]
+    fn test_torrent_info() {
+        assert_eq!(
+            r#"Tracker URL: http://bittorrent-test-tracker.codecrafters.io/announce
+Length: 92063
+Info Hash: d69f91e6b2ae4c542468d1073a71d4ea13879a7f
+Piece Length: 32768
+Piece Hashes:e876f67a2a8886e8f36b136726c30fa29703022d
+6e2275e604a0766656736e81ff10b55204ad8d35
+f00d937a0213df1982bc8d097227ad9e909acc17"#,
+            torrent_info("sample.torrent")
+        );
+    }
+
     #[test]
     fn test_display_bencode_values() {
         let bytes = "5:hello";
