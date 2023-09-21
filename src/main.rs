@@ -1,6 +1,9 @@
+use serde::{Deserialize, Serialize};
 use serde_bencode::{de, value::Value};
+use serde_bytes::ByteBuf;
 
 use std::env;
+use std::fs::read;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -9,9 +12,33 @@ fn main() {
         let encoded_value = &args[2];
         let decoded_value: Value = de::from_str(encoded_value).unwrap();
         println!("{}", displayed_value(decoded_value));
+    } else if command == "info" {
+        let torrent_path = &args[2];
+        let torrent = read(torrent_path).unwrap();
+        let decoded_value: Torrent = de::from_bytes::<Torrent>(&torrent).unwrap();
+        let announce = decoded_value.announce;
+        let length = decoded_value.info.length;
+        println!("Tracker URL: {}\nLength: {}", announce, length);
     } else {
         println!("unknown command: {}", args[1])
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Torrent {
+    announce: String,
+    #[serde(rename = "created by")]
+    created_by: String,
+    info: Info, //HashMap<Vec<u8>, Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Info {
+    length: i64,
+    name: String,
+    #[serde(rename = "piece length")]
+    piece_length: i64,
+    pieces: ByteBuf,
 }
 
 fn displayed_value(value: Value) -> String {
@@ -43,17 +70,18 @@ fn displayed_value(value: Value) -> String {
                 return "{}".to_string();
             }
             array.sort_by(|(key1, _), (key2, _)| std::cmp::Ord::cmp(key1, key2));
-            let mut displayed = array
-                .into_iter()
-                .fold(String::new(), |mut acc, (next_key, next_value)| {
-                    if acc.is_empty() {
-                        acc.push('{');
-                    } else {
-                        acc.push(',');
-                    }
-                    acc = format!("{acc}{next_key}:{next_value}");
-                    acc
-                });
+            let mut displayed =
+                array
+                    .into_iter()
+                    .fold(String::new(), |mut acc, (next_key, next_value)| {
+                        if acc.is_empty() {
+                            acc.push('{');
+                        } else {
+                            acc.push(',');
+                        }
+                        acc = format!("{acc}{next_key}:{next_value}");
+                        acc
+                    });
             displayed.push('}');
             displayed
         }
@@ -67,16 +95,22 @@ mod tests {
     fn test_display_bencode_values() {
         let bytes = "5:hello";
         assert_eq!("\"hello\"", displayed_value(de::from_str(bytes).unwrap()));
-        
+
         let number = "i42e";
         assert_eq!("42", displayed_value(de::from_str(number).unwrap()));
-        
+
         let list = "l5:helloi42ee";
-        assert_eq!("[\"hello\",42]", displayed_value(de::from_str(list).unwrap()));
-        
+        assert_eq!(
+            "[\"hello\",42]",
+            displayed_value(de::from_str(list).unwrap())
+        );
+
         let dict = "d3:foo3:bar5:helloi52ee";
-        assert_eq!(r#"{"foo":"bar","hello":52}"#, displayed_value(de::from_str(dict).unwrap()));
-        
+        assert_eq!(
+            r#"{"foo":"bar","hello":52}"#,
+            displayed_value(de::from_str(dict).unwrap())
+        );
+
         let empty_dict = "de";
         assert_eq!(r#"{}"#, displayed_value(de::from_str(empty_dict).unwrap()));
     }
