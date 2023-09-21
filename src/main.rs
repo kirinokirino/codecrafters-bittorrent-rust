@@ -43,8 +43,8 @@ fn main() {
 #[derive(Serialize, Deserialize, Debug)]
 struct Torrent {
     announce: String,
-    #[serde(rename = "created by")]
-    created_by: String,
+    #[serde(rename = "created by", default)]
+    created_by: Option<String>,
     info: Info, //HashMap<Vec<u8>, Value>,
 }
 
