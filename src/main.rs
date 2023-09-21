@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_bencode::{ser, de, value::Value};
+use serde_bencode::{de, ser, value::Value};
 use serde_bytes::ByteBuf;
-use sha1::{Sha1, Digest};
+use sha1::{Digest, Sha1};
 
 use std::env;
 use std::fs::read;
@@ -22,7 +22,19 @@ fn main() {
         let mut hasher = Sha1::new();
         hasher.update(ser::to_bytes(&decoded_value.info).unwrap());
         let info_hash = hasher.finalize();
-        println!("Tracker URL: {}\nLength: {}\nInfo Hash: {:x}", announce, length, info_hash);
+        let piece_length = decoded_value.info.piece_length;
+        let piece_hashes = decoded_value.info.pieces.as_slice();
+        println!(
+            "Tracker URL: {}\nLength: {}\nInfo Hash: {:x}\nPiece Length: {}\nPiece Hashes:",
+            announce, length, info_hash, piece_length
+        );
+        for (i, byte) in piece_hashes.iter().enumerate() {
+            if i % 20 == 19 {
+                println!("{byte:02x}");
+            } else {
+                print!("{byte:02x}");
+            }
+        }
     } else {
         println!("unknown command: {}", args[1])
     }
