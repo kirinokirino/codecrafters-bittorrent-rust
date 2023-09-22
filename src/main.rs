@@ -15,29 +15,7 @@ fn main() {
     } else if command == "info" {
         println!("{}", torrent_info(&args[2]));
     } else if command == "peers" {
-        let torrent = parse_torrent_file(&args[2]);
-        let info_hash: String = info_hash(&torrent.info)
-            .chars()
-            .enumerate()
-            .map(|(i, char)| {
-                if i % 2 == 0 {
-                    format!("%{char}")
-                } else {
-                    format!("{char}")
-                }
-            })
-            .collect();
-        let peer_id = "00112233445566778899";
-        let port = 6881;
-        let uploaded = 0;
-        let downloaded = 0;
-        let left = torrent.info.length;
-        let compact = 1;
-        let address = torrent.announce;
-        let body = reqwest::blocking::get(format!("{address}?info_hash={info_hash}&peer_id={peer_id}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&compact={compact}"));
-        let response_text = body.unwrap().bytes().unwrap();
-        let response: TrackerResponse = de::from_bytes(&response_text).unwrap();
-        let peers = parse_peers(&response.peers);
+        let peers = peers_for_torrent(&args[2]);
         peers.iter().for_each(|peer| println!("{peer}"));
     } else {
         println!("unknown command: {}", args[1])
@@ -67,6 +45,32 @@ struct Info {
     pieces: ByteBuf,
 }
 
+fn peers_for_torrent(path: &str) -> Vec<String> {
+    let torrent = parse_torrent_file(path);
+    let info_hash: String = formatted_info_hash(&torrent.info, "%");
+    let left = torrent.info.length;
+    let address = torrent.announce;
+    let response = request_to_tracker(left, &address, &info_hash);
+    parse_peers(&response.peers)
+}
+
+fn request_to_tracker(left: i64, address: &str, info_hash: &str) -> TrackerResponse {
+    let peer_id = "00112233445566778899";
+    let port = 6881;
+    let uploaded = 0;
+    let downloaded = 0;
+    let compact = 1;
+    let body = reqwest::blocking::get(format!("{address}?info_hash={info_hash}&peer_id={peer_id}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&compact={compact}"));
+    let response_text = body.unwrap().bytes().unwrap();
+    let response: Result<TrackerResponse, serde_bencode::error::Error> =
+        de::from_bytes(&response_text);
+    if response.is_err() {
+        dbg!(&response_text, response.err().unwrap());
+        panic!();
+    }
+    response.unwrap()
+}
+
 fn parse_peers(bytes: &[u8]) -> Vec<String> {
     let mut peers: Vec<String> = Vec::new();
     bytes.chunks(6).for_each(|chunk| {
@@ -93,7 +97,7 @@ fn torrent_info(path: &str) -> String {
         "Tracker URL: {}\nLength: {}\nInfo Hash: {}\nPiece Length: {}\nPiece Hashes:",
         announce,
         length,
-        info_hash(&torrent.info),
+        formatted_info_hash(&torrent.info, ""),
         piece_length
     );
     for (i, byte) in piece_hashes.iter().enumerate() {
@@ -106,11 +110,17 @@ fn torrent_info(path: &str) -> String {
     output.trim_end_matches('\n').to_string()
 }
 
-fn info_hash(info: &Info) -> String {
+fn info_hash(info: &Info) -> Vec<u8> {
     let mut hasher = Sha1::new();
     hasher.update(ser::to_bytes(info).unwrap());
-    let info_hash = hasher.finalize();
-    format!("{:x}", info_hash)
+    hasher.finalize().to_vec()
+}
+
+fn formatted_info_hash(info: &Info, separator: &str) -> String {
+    info_hash(info)
+        .iter()
+        .map(|byte| format!("{separator}{byte:02x}"))
+        .collect()
 }
 
 fn decode(value: &str) -> String {
@@ -168,6 +178,15 @@ fn displayed_value(value: Value) -> String {
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    #[test]
+    fn test_peers() {
+        let peers = peers_for_torrent("sample.torrent");
+        let hardcoded_peers = vec!["178.62.82.89:51470", "165.232.33.77:51467", "178.62.85.20:51489"];
+        for (peer1, peer2) in peers.iter().zip(hardcoded_peers.iter()) {
+            assert_eq!(peer1, peer2);
+        }
+    }
 
     #[test]
     fn test_torrent_info() {
