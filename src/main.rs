@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use serde_bencode::{de, ser, value::Value};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
+use tempfile;
 
 use std::env;
-use std::net::TcpStream;
-use std::fs::read;
+use std::fs::{read, File};
 use std::io::prelude::*;
+use std::net::TcpStream;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,11 +21,53 @@ fn main() {
         let peers = peers_for_torrent(&args[2]);
         peers.iter().for_each(|peer| println!("{peer}"));
     } else if command == "handshake" {
-        let handshake_peer = handshake(&args[2], &args[3]);
+        let mut stream = TcpStream::connect(&args[3]).unwrap();
+        let handshake_peer = handshake(&mut stream, &args[2]);
         println!("Peer ID: {handshake_peer}");
+    } else if command == "download_piece" {
+        let _dash_o = &args[2];
+        let download_path = &args[3];
+        let torrent_path = &args[4];
+        let piece_idx = &args[5];
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_tmp_folder, file_path) = download_path.split_once("/tmp/").unwrap();
+        let temp_file_path = temp_dir.path().join(file_path);
+        dbg!(&temp_file_path);
+        let mut file = File::create(temp_file_path).unwrap();
+
+        //let torrent = parse_torrent_file(torrent_path);
+        let peers = peers_for_torrent(torrent_path);
+        let mut stream = TcpStream::connect(peers.first().unwrap()).unwrap();
+        handshake(&mut stream, torrent_path);
+
+        let mut message_buf = [0u8; 16 * 1024 + 5];
+        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
+        if bytes_read == 0 {
+            panic!("no bytes read!");
+        }
+        let message_length = u32::from_be_bytes([
+            message_buf[0],
+            message_buf[1],
+            message_buf[2],
+            message_buf[3],
+        ]);
+        let message_id = message_buf[4];
+        if message_id != 5 {
+            dbg!(message_id);
+            panic!("message_id is not 5 (not bitfield)");
+        }
+        dbg!(message_length, message_id);
     } else {
         println!("unknown command: {}", args[1])
     }
+}
+
+#[derive(Debug)]
+struct PeerMessage {
+    message_length: u32,
+    message_id: u8,
+    payload: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -50,25 +93,31 @@ struct Info {
     pieces: ByteBuf,
 }
 
-fn handshake(torrent_path: &str, connect_to: &str) -> String {
-        let torrent = parse_torrent_file(torrent_path);
-        //let separator_index = peer_to_handshake.find(':').unwrap();
-        //let (ip, port) = peer_to_handshake.split_at(separator_index);
-        let mut stream = TcpStream::connect(connect_to).unwrap();
-        let protocol_name = "BitTorrent protocol";
-        let protocol_name_length = protocol_name.chars().count() as u8;
-        let reserved = [0u8; 8];
-        let info_hash = info_hash(&torrent.info);
-        let peer_id = "00112233445566778899";
-        let handshake_message = [
-            &[protocol_name_length], protocol_name.as_bytes(), &reserved, info_hash.as_slice(), peer_id.as_bytes()
-        ].concat();
-        let sent = stream.write(&handshake_message).unwrap();
-        //println!("bytes sent: {sent}");
-        let mut response_buffer: [u8; 68] = [0u8; 68];
-        let received = stream.read(&mut response_buffer).unwrap();
-        //println!("bytes received: {received}");
-        response_buffer.iter().skip(68-20).map(|byte| format!("{:02x}", byte)).collect()
+fn handshake(stream: &mut TcpStream, torrent_path: &str) -> String {
+    let torrent = parse_torrent_file(torrent_path);
+    //let separator_index = peer_to_handshake.find(':').unwrap();
+    //let (ip, port) = peer_to_handshake.split_at(separator_index);
+    let protocol_name = "BitTorrent protocol";
+    let protocol_name_length = protocol_name.chars().count() as u8;
+    let reserved = [0u8; 8];
+    let info_hash = info_hash(&torrent.info);
+    let peer_id = "00112233445566778899";
+    let handshake_message = [
+        &[protocol_name_length],
+        protocol_name.as_bytes(),
+        &reserved,
+        info_hash.as_slice(),
+        peer_id.as_bytes(),
+    ]
+    .concat();
+    let _sent = stream.write(&handshake_message).unwrap();
+    let mut response_buffer: [u8; 68] = [0u8; 68];
+    let _received = stream.read(&mut response_buffer).unwrap();
+    response_buffer
+        .iter()
+        .skip(68 - 20)
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
 }
 
 fn peers_for_torrent(path: &str) -> Vec<String> {
@@ -208,11 +257,12 @@ mod tests {
     #[test]
     fn test_handshake() {
         let connect_to = "178.62.82.89:51470";
+        let mut stream = TcpStream::connect(connect_to).unwrap();
         let hardcoded_peer = "2d524e302e302e302d2e99080f6fd8278cf6e0f2";
-        let handshake_peer = handshake("sample.torrent", connect_to);
+        let handshake_peer = handshake(&mut stream, "sample.torrent");
         assert_eq!(hardcoded_peer, handshake_peer);
     }
-    
+
     #[test]
     fn test_peers() {
         let peers = peers_for_torrent("sample.torrent");
