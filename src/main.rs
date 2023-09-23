@@ -5,7 +5,9 @@ use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 
 use std::env;
+use std::net::TcpStream;
 use std::fs::read;
+use std::io::prelude::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -17,6 +19,27 @@ fn main() {
     } else if command == "peers" {
         let peers = peers_for_torrent(&args[2]);
         peers.iter().for_each(|peer| println!("{peer}"));
+    } else if command == "handshake" {
+        let torrent = parse_torrent_file(&args[2]);
+        let peer_to_handshake = &args[3];
+        //let separator_index = peer_to_handshake.find(':').unwrap();
+        //let (ip, port) = peer_to_handshake.split_at(separator_index);
+        let mut stream = TcpStream::connect(peer_to_handshake).unwrap();
+        let protocol_name = "BitTorrent protocol";
+        let protocol_name_length = protocol_name.chars().count() as u8;
+        let reserved = [0u8; 8];
+        let info_hash = info_hash(&torrent.info);
+        let peer_id = "00112233445566778899";
+        let handshake_message = [
+            &[protocol_name_length], protocol_name.as_bytes(), &reserved, info_hash.as_slice(), peer_id.as_bytes()
+        ].concat();
+        let sent = stream.write(&handshake_message).unwrap();
+        //println!("bytes sent: {sent}");
+        let mut response_buffer: [u8; 68] = [0u8; 68];
+        let received = stream.read(&mut response_buffer).unwrap();
+        //println!("bytes received: {received}");
+        let response_peer: String = response_buffer.iter().skip(68-20).map(|byte| format!("{:02x}", byte)).collect();
+        println!("Peer ID: {response_peer}");
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -182,7 +205,11 @@ mod tests {
     #[test]
     fn test_peers() {
         let peers = peers_for_torrent("sample.torrent");
-        let hardcoded_peers = vec!["178.62.82.89:51470", "165.232.33.77:51467", "178.62.85.20:51489"];
+        let hardcoded_peers = vec![
+            "178.62.82.89:51470",
+            "165.232.33.77:51467",
+            "178.62.85.20:51489",
+        ];
         for (peer1, peer2) in peers.iter().zip(hardcoded_peers.iter()) {
             assert_eq!(peer1, peer2);
         }
