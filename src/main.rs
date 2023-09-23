@@ -20,26 +20,8 @@ fn main() {
         let peers = peers_for_torrent(&args[2]);
         peers.iter().for_each(|peer| println!("{peer}"));
     } else if command == "handshake" {
-        let torrent = parse_torrent_file(&args[2]);
-        let peer_to_handshake = &args[3];
-        //let separator_index = peer_to_handshake.find(':').unwrap();
-        //let (ip, port) = peer_to_handshake.split_at(separator_index);
-        let mut stream = TcpStream::connect(peer_to_handshake).unwrap();
-        let protocol_name = "BitTorrent protocol";
-        let protocol_name_length = protocol_name.chars().count() as u8;
-        let reserved = [0u8; 8];
-        let info_hash = info_hash(&torrent.info);
-        let peer_id = "00112233445566778899";
-        let handshake_message = [
-            &[protocol_name_length], protocol_name.as_bytes(), &reserved, info_hash.as_slice(), peer_id.as_bytes()
-        ].concat();
-        let sent = stream.write(&handshake_message).unwrap();
-        //println!("bytes sent: {sent}");
-        let mut response_buffer: [u8; 68] = [0u8; 68];
-        let received = stream.read(&mut response_buffer).unwrap();
-        //println!("bytes received: {received}");
-        let response_peer: String = response_buffer.iter().skip(68-20).map(|byte| format!("{:02x}", byte)).collect();
-        println!("Peer ID: {response_peer}");
+        let handshake_peer = handshake(&args[2], &args[3]);
+        println!("Peer ID: {handshake_peer}");
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -66,6 +48,27 @@ struct Info {
     #[serde(rename = "piece length")]
     piece_length: i64,
     pieces: ByteBuf,
+}
+
+fn handshake(torrent_path: &str, connect_to: &str) -> String {
+        let torrent = parse_torrent_file(torrent_path);
+        //let separator_index = peer_to_handshake.find(':').unwrap();
+        //let (ip, port) = peer_to_handshake.split_at(separator_index);
+        let mut stream = TcpStream::connect(connect_to).unwrap();
+        let protocol_name = "BitTorrent protocol";
+        let protocol_name_length = protocol_name.chars().count() as u8;
+        let reserved = [0u8; 8];
+        let info_hash = info_hash(&torrent.info);
+        let peer_id = "00112233445566778899";
+        let handshake_message = [
+            &[protocol_name_length], protocol_name.as_bytes(), &reserved, info_hash.as_slice(), peer_id.as_bytes()
+        ].concat();
+        let sent = stream.write(&handshake_message).unwrap();
+        //println!("bytes sent: {sent}");
+        let mut response_buffer: [u8; 68] = [0u8; 68];
+        let received = stream.read(&mut response_buffer).unwrap();
+        //println!("bytes received: {received}");
+        response_buffer.iter().skip(68-20).map(|byte| format!("{:02x}", byte)).collect()
 }
 
 fn peers_for_torrent(path: &str) -> Vec<String> {
@@ -202,6 +205,14 @@ fn displayed_value(value: Value) -> String {
 mod tests {
     use crate::*;
 
+    #[test]
+    fn test_handshake() {
+        let connect_to = "178.62.82.89:51470";
+        let hardcoded_peer = "2d524e302e302e302d2e99080f6fd8278cf6e0f2";
+        let handshake_peer = handshake("sample.torrent", connect_to);
+        assert_eq!(hardcoded_peer, handshake_peer);
+    }
+    
     #[test]
     fn test_peers() {
         let peers = peers_for_torrent("sample.torrent");
