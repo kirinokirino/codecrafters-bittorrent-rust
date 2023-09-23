@@ -36,53 +36,57 @@ fn main() {
         dbg!(&temp_file_path);
         let mut file = File::create(temp_file_path).unwrap();
 
-        //let torrent = parse_torrent_file(torrent_path);
+        let torrent = parse_torrent_file(torrent_path);
         let peers = peers_for_torrent(torrent_path);
         let mut stream = TcpStream::connect(peers.first().unwrap()).unwrap();
         handshake(&mut stream, torrent_path);
 
-        let mut message_buf = [0u8; 16 * 1024 + 5];
+        let mut message_buf = [0u8; 16 * 1024 + 10];
+        
         // bitfield message <-
         let bytes_read = stream.read(&mut message_buf[..]).unwrap();
-        if bytes_read == 0 {
-            panic!("no bytes read!");
-        }
-        let message_length = u32::from_be_bytes([
-            message_buf[0],
-            message_buf[1],
-            message_buf[2],
-            message_buf[3],
-        ]);
+        assert!(bytes_read > 0);
+        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
         let message_id = message_buf[4];
-        if message_id != 5 {
-            dbg!(message_id);
-            panic!("message_id is not 5 (not bitfield)");
-        }
+        assert_eq!(message_id, 5);
         dbg!(message_length, message_id);
+        
         // interested message ->
         let message = [1u32.to_be_bytes().as_slice(), &[2].as_slice()].concat();
         let bytes_sent = stream.write(&message).unwrap();
-        if bytes_sent == 0 { panic!("no bytes sent!"); }
+        assert!(bytes_sent > 0);
         
         // unchoke message <-
         let bytes_read = stream.read(&mut message_buf[..]).unwrap();
-        if bytes_read == 0 {
-            panic!("no bytes read!");
-        }
-        let message_length = u32::from_be_bytes([
-            message_buf[0],
-            message_buf[1],
-            message_buf[2],
-            message_buf[3],
-        ]);
+        assert!(bytes_read > 0);
+        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
         let message_id = message_buf[4];
-        if message_id != 1 {
-            dbg!(message_id);
-            panic!("message_id is not 1 (not unchoke)");
-        }
+        assert_eq!(message_id, 1);
         dbg!(message_length, message_id);
+        
         // request message ->
+        let file_size = torrent.info.length;
+        let piece_size = torrent.info.piece_length;
+        let last_piece_size = file_size % piece_size;
+        let pieces = file_size / piece_size;
+        
+        let piece_index = 0usize;
+        let block_offset = 0usize;
+        let block_size = 16 * 1024;
+        let last_block_size = piece_size % block_size;
+        
+        let message_payload = [piece_index.to_be_bytes(), block_offset.to_be_bytes(), block_size.to_be_bytes()].concat();
+        let message_length = message_payload.len() + 1;
+        let sent = stream.write_all(&[message_length.to_be_bytes().as_slice(), &[6u8].as_slice(), message_payload.as_slice()].concat());
+        assert!(sent.is_ok());
+        
         // piece message <-
+        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
+        assert!(bytes_read > 0);
+        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
+        let message_id = message_buf[4];
+        assert_eq!(message_id, 7);
+        dbg!(message_length, message_id);
     } else {
         println!("unknown command: {}", args[1])
     }
