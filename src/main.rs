@@ -42,6 +42,7 @@ fn main() {
         handshake(&mut stream, torrent_path);
 
         let mut message_buf = [0u8; 16 * 1024 + 5];
+        // bitfield message <-
         let bytes_read = stream.read(&mut message_buf[..]).unwrap();
         if bytes_read == 0 {
             panic!("no bytes read!");
@@ -58,6 +59,30 @@ fn main() {
             panic!("message_id is not 5 (not bitfield)");
         }
         dbg!(message_length, message_id);
+        // interested message ->
+        let message = [1u32.to_be_bytes().as_slice(), &[2].as_slice()].concat();
+        let bytes_sent = stream.write(&message).unwrap();
+        if bytes_sent == 0 { panic!("no bytes sent!"); }
+        
+        // unchoke message <-
+        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
+        if bytes_read == 0 {
+            panic!("no bytes read!");
+        }
+        let message_length = u32::from_be_bytes([
+            message_buf[0],
+            message_buf[1],
+            message_buf[2],
+            message_buf[3],
+        ]);
+        let message_id = message_buf[4];
+        if message_id != 1 {
+            dbg!(message_id);
+            panic!("message_id is not 1 (not unchoke)");
+        }
+        dbg!(message_length, message_id);
+        // request message ->
+        // piece message <-
     } else {
         println!("unknown command: {}", args[1])
     }
