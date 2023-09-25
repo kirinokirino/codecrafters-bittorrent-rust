@@ -25,6 +25,85 @@ fn main() {
         let mut stream = TcpStream::connect(&args[3]).unwrap();
         let handshake_peer = handshake(&mut stream, &args[2]);
         println!("Peer ID: {handshake_peer}");
+    } else if command == "download" {
+        let _dash_o = &args[2];
+        let download_path = &args[3];
+        let torrent_path = &args[4];
+
+        let mut file = File::create(download_path).unwrap();
+        let torrent = parse_torrent_file(torrent_path);
+        let peers = peers_for_torrent(torrent_path);
+        let mut stream = TcpStream::connect(peers.first().unwrap()).unwrap();
+        handshake(&mut stream, torrent_path);
+
+        // bitfield message <-
+        let (message_type, _) = recieve_message(&mut stream);
+        assert_eq!(message_type, PeerMessage::Bitfield);
+
+        // interested message ->
+        let bytes_sent = send_message(&mut stream, PeerMessage::Interested, None);
+        assert!(bytes_sent > 0);
+
+        // unchoke message <-
+        let (message_type, _) = recieve_message(&mut stream);
+        assert_eq!(message_type, PeerMessage::Unchoke);
+
+        // request message ->
+        let piece_hashes = torrent.info.pieces.into_iter();
+        let mut piece_index = 0u32;
+        let mut downloaded = 0;
+        let file_size = torrent.info.length as u32;
+
+        while downloaded < file_size {
+            let current_piece_size = (torrent.info.piece_length as u32).min(file_size - downloaded);
+            let mut piece_data = Vec::with_capacity(current_piece_size as usize);
+
+            let mut block_offset = 0u32;
+            while block_offset < current_piece_size {
+                let block_size = (current_piece_size - block_offset).min(16 * 1024);
+
+                let message_payload = [
+                    piece_index.to_be_bytes(),
+                    block_offset.to_be_bytes(),
+                    block_size.to_be_bytes(),
+                ]
+                .concat();
+                let bytes_sent =
+                    send_message(&mut stream, PeerMessage::Request, Some(message_payload));
+                assert!(bytes_sent >= 4 * 3);
+
+                // piece message <-
+                let (message_type, payload) = recieve_message(&mut stream);
+                assert_eq!(message_type, PeerMessage::Piece);
+                assert!(payload.is_some());
+                if let Some(payload) = payload {
+                    assert!(payload.len() >= 4 + 4);
+                    let recieved_piece_index =
+                        u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                    assert_eq!(recieved_piece_index, piece_index);
+                    let offset_within_the_piece =
+                        u32::from_be_bytes(payload[4..8].try_into().unwrap());
+                    assert_eq!(offset_within_the_piece, block_offset);
+                    let recieved_data = &payload[8..];
+                    if (recieved_data.len() != block_size as usize) {
+                        eprintln!(
+                            "block sizes didn't match, expected block_size: {}, recieved: {}",
+                            block_size,
+                            recieved_data.len()
+                        );
+                    }
+                    block_offset += recieved_data.len() as u32;
+                    piece_data.extend_from_slice(recieved_data);
+                }
+            }
+            let piece_hash: Vec<u8> = piece_hashes.clone().skip((20 * piece_index) as usize).take(20).collect();
+            if hash(&piece_data) != piece_hash {
+                eprintln!("ERROR: hashes are different");
+            }
+            file.write_all(piece_data.as_slice()).unwrap();
+            downloaded += piece_data.len() as u32;
+            piece_index += 1;
+        }
     } else if command == "download_piece" {
         let _dash_o = &args[2];
         let download_path = &args[3];
@@ -96,6 +175,13 @@ fn main() {
                 let offset_within_the_piece = u32::from_be_bytes(payload[4..8].try_into().unwrap());
                 assert_eq!(offset_within_the_piece, block_offset);
                 let recieved_data = &payload[8..];
+                if (recieved_data.len() != block_size as usize) {
+                    eprintln!(
+                        "block sizes didn't match, expected block_size: {}, recieved: {}",
+                        block_size,
+                        recieved_data.len()
+                    );
+                }
                 block_offset += recieved_data.len() as u32;
                 piece_data.extend_from_slice(recieved_data);
             }
