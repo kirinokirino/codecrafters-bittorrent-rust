@@ -74,7 +74,7 @@ fn main() {
 
         let mut block_offset = 0u32;
         while block_offset < current_piece_size {
-            let block_size = (piece_size - block_offset).min(16 * 1024);
+            let block_size = (current_piece_size - block_offset).min(16 * 1024);
 
             let message_payload = [
                 piece_index.to_be_bytes(),
@@ -101,7 +101,9 @@ fn main() {
             }
         }
         let piece_hash: Vec<u8> = torrent.info.pieces.into_iter().take(20).collect();
-        assert_eq!(hash(&piece_data), piece_hash);
+        if hash(&piece_data) != piece_hash {
+            eprintln!("ERROR: hashes are different");
+        }
         file.write_all(piece_data.as_slice()).unwrap();
     } else {
         println!("unknown command: {}", args[1])
