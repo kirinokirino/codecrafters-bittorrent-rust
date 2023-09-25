@@ -31,9 +31,9 @@ fn main() {
         let torrent_path = &args[4];
         let piece_idx = &args[5];
 
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (_tmp_folder, file_path) = download_path.split_once("/tmp/").unwrap();
-        let temp_file_path = temp_dir.path().join(file_path);
+        //let temp_dir = tempfile::tempdir().unwrap();
+        //let (_tmp_folder, file_path) = download_path.split_once("/tmp/").unwrap();
+        let temp_file_path = download_path; //temp_dir.path().join(file_path);
         dbg!(&temp_file_path);
         let mut file = File::create(temp_file_path).unwrap();
 
@@ -55,36 +55,54 @@ fn main() {
         assert_eq!(message_type, PeerMessage::Unchoke);
 
         // request message ->
-        let file_size = torrent.info.length;
-        let piece_size = torrent.info.piece_length;
+        let file_size = torrent.info.length as u32;
+        let piece_size = torrent.info.piece_length as u32;
         let last_piece_size = file_size % piece_size;
         let full_pieces = file_size / piece_size;
 
-        let piece_index = piece_idx.parse::<usize>().unwrap();
-        let current_piece_size = if (piece_index as i64) < full_pieces {
+        let piece_index = piece_idx.parse::<u32>().unwrap();
+        let current_piece_size = if (piece_index as u32) < full_pieces {
             piece_size
-        } else if (piece_index as i64) == full_pieces {
+        } else if (piece_index as u32) == full_pieces {
             last_piece_size
         } else {
             panic!("piece index out of bounds!");
         };
-        let block_offset = 0usize;
-        let block_size = 16 * 1024;
-        let last_block_size = piece_size % block_size;
+        let mut piece_data = Vec::with_capacity(current_piece_size as usize);
 
-        let message_payload = [
-            piece_index.to_be_bytes(),
-            block_offset.to_be_bytes(),
-            block_size.to_be_bytes(),
-        ]
-        .concat();
-        let bytes_sent = send_message(&mut stream, PeerMessage::Request, Some(message_payload));
-        assert!(bytes_sent > 3);
+        // loop for blocks of the piece
 
-        // piece message <-
-        let (message_type, payload) = recieve_message(&mut stream);
-        assert_eq!(message_type, PeerMessage::Piece);
-        assert!(payload.is_some());
+        let mut block_offset = 0u32;
+        while block_offset < current_piece_size {
+            let block_size = (piece_size - block_offset).min(16 * 1024);
+
+            let message_payload = [
+                piece_index.to_be_bytes(),
+                block_offset.to_be_bytes(),
+                block_size.to_be_bytes(),
+            ]
+            .concat();
+            let bytes_sent = send_message(&mut stream, PeerMessage::Request, Some(message_payload));
+            assert!(bytes_sent >= 4 * 3);
+
+            // piece message <-
+            let (message_type, payload) = recieve_message(&mut stream);
+            assert_eq!(message_type, PeerMessage::Piece);
+            assert!(payload.is_some());
+            if let Some(payload) = payload {
+                assert!(payload.len() >= 4 + 4);
+                let recieved_piece_index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                assert_eq!(recieved_piece_index, piece_index);
+                let offset_within_the_piece = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+                assert_eq!(offset_within_the_piece, block_offset);
+                let recieved_data = &payload[8..];
+                block_offset += recieved_data.len() as u32;
+                piece_data.extend_from_slice(recieved_data);
+            }
+        }
+        let piece_hash: Vec<u8> = torrent.info.pieces.into_iter().take(20).collect();
+        assert_eq!(hash(&piece_data), piece_hash);
+        file.write_all(piece_data.as_slice()).unwrap();
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -96,8 +114,9 @@ fn recieve_message(stream: &mut TcpStream) -> (PeerMessage, Option<Vec<u8>>) {
     let length = u32::from_be_bytes(length);
 
     let mut message = [0u8].repeat(length as usize);
-    stream.read_exact(&mut message);
+    stream.read_exact(&mut message).unwrap();
     let message_type: PeerMessage = message[0].try_into().unwrap();
+    dbg!(&message_type, &length);
     (message_type, Some(message[1..].to_vec()))
 }
 
@@ -265,8 +284,12 @@ fn torrent_info(path: &str) -> String {
 }
 
 fn info_hash(info: &Info) -> Vec<u8> {
+    hash(ser::to_bytes(info).unwrap().as_slice())
+}
+
+fn hash(bytes: &[u8]) -> Vec<u8> {
     let mut hasher = Sha1::new();
-    hasher.update(ser::to_bytes(info).unwrap());
+    hasher.update(bytes);
     hasher.finalize().to_vec()
 }
 
