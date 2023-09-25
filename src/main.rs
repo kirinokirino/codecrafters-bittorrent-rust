@@ -5,6 +5,7 @@ use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 use tempfile;
 
+use std::convert::TryFrom;
 use std::env;
 use std::fs::{read, File};
 use std::io::prelude::*;
@@ -41,62 +42,111 @@ fn main() {
         let mut stream = TcpStream::connect(peers.first().unwrap()).unwrap();
         handshake(&mut stream, torrent_path);
 
-        let mut message_buf = [0u8; 16 * 1024 + 10];
-        
         // bitfield message <-
-        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
-        assert!(bytes_read > 0);
-        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
-        let message_id = message_buf[4];
-        assert_eq!(message_id, 5);
-        dbg!(message_length, message_id);
-        
+        let (message_type, _) = recieve_message(&mut stream);
+        assert_eq!(message_type, PeerMessage::Bitfield);
+
         // interested message ->
-        let message = [1u32.to_be_bytes().as_slice(), &[2].as_slice()].concat();
-        let bytes_sent = stream.write(&message).unwrap();
+        let bytes_sent = send_message(&mut stream, PeerMessage::Interested, None);
         assert!(bytes_sent > 0);
-        
+
         // unchoke message <-
-        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
-        assert!(bytes_read > 0);
-        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
-        let message_id = message_buf[4];
-        assert_eq!(message_id, 1);
-        dbg!(message_length, message_id);
-        
+        let (message_type, _) = recieve_message(&mut stream);
+        assert_eq!(message_type, PeerMessage::Unchoke);
+
         // request message ->
         let file_size = torrent.info.length;
         let piece_size = torrent.info.piece_length;
         let last_piece_size = file_size % piece_size;
-        let pieces = file_size / piece_size;
-        
-        let piece_index = 0usize;
+        let full_pieces = file_size / piece_size;
+
+        let piece_index = piece_idx.parse::<usize>().unwrap();
+        let current_piece_size = if (piece_index as i64) < full_pieces {
+            piece_size
+        } else if (piece_index as i64) == full_pieces {
+            last_piece_size
+        } else {
+            panic!("piece index out of bounds!");
+        };
         let block_offset = 0usize;
         let block_size = 16 * 1024;
         let last_block_size = piece_size % block_size;
-        
-        let message_payload = [piece_index.to_be_bytes(), block_offset.to_be_bytes(), block_size.to_be_bytes()].concat();
-        let message_length = message_payload.len() + 1;
-        let sent = stream.write_all(&[message_length.to_be_bytes().as_slice(), &[6u8].as_slice(), message_payload.as_slice()].concat());
-        assert!(sent.is_ok());
-        
+
+        let message_payload = [
+            piece_index.to_be_bytes(),
+            block_offset.to_be_bytes(),
+            block_size.to_be_bytes(),
+        ]
+        .concat();
+        let bytes_sent = send_message(&mut stream, PeerMessage::Request, Some(message_payload));
+        assert!(bytes_sent > 3);
+
         // piece message <-
-        let bytes_read = stream.read(&mut message_buf[..]).unwrap();
-        assert!(bytes_read > 0);
-        let message_length = u32::from_be_bytes(message_buf[0..4].try_into().unwrap());
-        let message_id = message_buf[4];
-        assert_eq!(message_id, 7);
-        dbg!(message_length, message_id);
+        let (message_type, payload) = recieve_message(&mut stream);
+        assert_eq!(message_type, PeerMessage::Piece);
+        assert!(payload.is_some());
     } else {
         println!("unknown command: {}", args[1])
     }
 }
 
-#[derive(Debug)]
-struct PeerMessage {
-    message_length: u32,
-    message_id: u8,
+fn recieve_message(stream: &mut TcpStream) -> (PeerMessage, Option<Vec<u8>>) {
+    let mut length = [0u8; 4];
+    let _ = stream.read_exact(&mut length[..]);
+    let length = u32::from_be_bytes(length);
+
+    let mut message = [0u8].repeat(length as usize);
+    stream.read_exact(&mut message);
+    let message_type: PeerMessage = message[0].try_into().unwrap();
+    (message_type, Some(message[1..].to_vec()))
+}
+
+fn send_message(
+    stream: &mut TcpStream,
+    message_type: PeerMessage,
     payload: Option<Vec<u8>>,
+) -> usize {
+    let message = if let Some(payload) = payload {
+        let length = payload.len() + 1;
+        [
+            length.to_be_bytes().as_slice(),
+            [message_type as u8].as_slice(),
+            payload.as_slice(),
+        ]
+        .concat()
+    } else {
+        [
+            1u32.to_be_bytes().as_slice(),
+            [message_type as u8].as_slice(),
+        ]
+        .concat()
+    };
+    stream.write(&message).unwrap()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PeerMessage {
+    Choke = 0,
+    Unchoke = 1,
+    Interested = 2,
+    NotInterested = 3,
+    Have = 4,
+    Bitfield = 5,
+    Request = 6,
+    Piece = 7,
+    Cancel = 8,
+}
+
+impl TryFrom<u8> for PeerMessage {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value > 8 {
+            Err(())
+        } else {
+            Ok(unsafe { std::mem::transmute(value) })
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
